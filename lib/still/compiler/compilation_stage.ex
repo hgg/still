@@ -51,9 +51,30 @@ defmodule Still.Compiler.CompilationStage do
     GenServer.call(__MODULE__, :unsubscribe)
   end
 
+  @doc """
+  Register a callback to be run after the compilation cycle but before the
+  subscribers are notified. This function is meant to be used by development
+  libraries only.
+
+  It is particularly useful for making last minute additions after all the
+  preprocessor pipelines have run, such as adding a generated sitemap or
+  minifying assets.
+  """
+  def register(fun) do
+    GenServer.cast(__MODULE__, {:register, fun})
+  end
+
   @impl true
   def init(_) do
-    {:ok, %{to_compile: [], subscribers: [], changed: false, timer: nil}}
+    state = %{
+      to_compile: [],
+      subscribers: [],
+      callbacks: [],
+      changed: false,
+      timer: nil
+    }
+
+    {:ok, state}
   end
 
   @impl true
@@ -96,8 +117,17 @@ defmodule Still.Compiler.CompilationStage do
      }}
   end
 
+  def handle_cast({:register, fun}, state) do
+    callbacks = [fun | state.callbacks] |> Enum.uniq()
+
+    {:noreply, %{state | callbacks: callbacks}}
+  end
+
   @impl true
   def handle_info(:run, %{to_compile: [], changed: true} = state) do
+    state.callbacks
+    |> Enum.each(fn fun -> fun.() end)
+
     state.subscribers
     |> Enum.each(fn pid ->
       send(pid, :bus_empty)
